@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Jun 21 17:29:07 2021
+
+@author: kiril
+"""
+
+from urllib.request import urlopen as uReq
+from bs4 import BeautifulSoup as soup
+from selenium import webdriver
+import re 
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import numpy as np
+import pandas as pd 
+
+# Start the browser with the page of interests 
+browser = webdriver.Firefox()
+browser.get("https://stackshare.io/payments")
+
+print('Loading products...')
+# Load the full webpage 
+while True:    
+    try:
+        btn = browser.find_element_by_link_text("Load more")
+        btn.click()
+    except:
+        break
+
+print("Products loaded!")
+#del i 
+
+# Parse the webpage 
+html = browser.page_source
+page_soup = soup(html, "html.parser")
+
+# Close the browser
+browser.quit()
+
+# grab each stack
+stacks = page_soup.findAll("span", {"itemprop" : "keywords"})
+
+# Create a list of the companies 
+comps = []
+for i in range(len(stacks)):
+    #print(str(i) + ' ' + stacks[i].text.replace(' ', '-'))
+    comps.append(str(stacks[i].text))    
+
+# Clean up the names and deal with some special cases 
+for name in range(0, len(comps)):
+    if " " in comps[name]:
+        comps[name] = comps[name].replace(' ', '-')
+        comps[name] = comps[name].strip()
+       
+        if comps[name] == 'Blockchain-':
+            comps[name] = 'Blockchain-com'
+        
+        if comps[name] == 'Per---Activity-base...':
+            comps[name] = 'per-activity-based-billing'
+
+    if comps[name] == 'Dwolla.js':
+        comps[name] = 'dwollajs'
+        
+    if comps[name] == 'LineLytics':
+        comps[name] = 'linelytics'
+        
+    if comps[name] == 'Expiry.io':
+        comps[name] = 'expiry-io'
+                
+    if comps[name] == 'Checkout.com':
+        comps[name] = 'checkout-com'
+            
+del i, name, stacks, html 
+           
+#Obtain the pages of the individual stacks
+URL = "https://stackshare.io/"
+
+# Create a csv to store the data from the web 
+data = pd.DataFrame()
+
+for page in range(0, len(comps)):
+    
+    try: 
+        # Opening a connection to webpage
+        uClient = uReq(URL + comps[page])      
+        page_html = uClient.read()
+        page_soup = soup(page_html, "html.parser")
+    except:
+        print("Broken link for " + comps[page])
+        continue
+        
+    
+    try:    
+        # Obtain statistics of interest - Stacks, Followers, Votes 
+        stacks = page_soup.findAll("div", {"class" : "css-gbti5j"})[0].text
+        stacks = stacks.replace('Stacks', '')
+        if 'K' in stacks:
+            stacks = stacks.replace('.','')
+            stacks = stacks.replace('K', '00')
+        stacks = int(stacks)
+    except:
+        stacks = np.nan
+        
+    try:    
+        followers = page_soup.findAll("div", {"class" : "css-1an0suy"})[0].text  
+        followers = followers.replace("+ 1", '')
+        followers = followers.replace('Followers', '')
+        if 'K' in followers: 
+            followers = followers.replace('.', '')
+            followers = followers.replace('K', '00')
+        followers = int(followers)
+        
+    except:
+        followers = np.nan
+    
+    try:    
+        votes = page_soup.findAll("div", {"class" : "css-gbti5j"})[1].text
+        votes = votes.replace('Votes', '')
+        if 'K' in votes: 
+            votes = votes.replace('.', '')
+            votes = votes.replace('K', '00')
+        votes = int(votes)
+    except:
+        votes = np.nan
+             
+        #Grab N of companies, developers and intergrations  
+    try: 
+        companies = page_soup.findAll("div", {"class" : "css-dj0mxl"})[0].text
+        companies = re.findall("\d+", companies)
+        companies = int(companies[0])
+    except:
+        companies = np.nan
+            
+    try:       
+        devs = page_soup.findAll("div", {"class" : "css-13sfqhu"})[10].text
+        devs = re.findall("\d+", devs)
+        devs = int(devs[0])        
+    except:
+        devs = np.nan
+        
+    try:
+        integrations = page_soup.findAll("div", {"class" : "css-1n4juvm"})[0].text
+        integrations = re.findall("\d+", integrations)
+        integrations = int(integrations[0])       
+    except:
+        integrations = np.nan
+            
+        # Analyze comments by decision makers 
+        # Start the browser and direct towards the comments page  
+
+    try:
+        uClient1 = uReq(URL + "tool/" + comps[page] + "/decisions")
+        page_html1 = uClient1.read()
+        page_soup1 = soup(page_html1, "html.parser")
+        print('Loading page... ' + str(comps[page]) + ' (' + str(page) + " out of " + str(len(comps)) + ')')
+        
+        #Find the comments on the webpage (ommit replies)
+        comments = page_soup1.findAll("div", {"class" : "css-4ffy4n"})
+            
+        ### Extract sentiment from the comments 
+            
+        # Initialize sentiment variables 
+        neg = 0
+        neu = 0
+        pos = 0
+        compound = 0 
+            
+        # Obtain individual comments sentiment and increment the sentiment variables 
+        for i in range(0,len(comments)):
+    
+            analyzer = SentimentIntensityAnalyzer()
+            vs = analyzer.polarity_scores(comments[i].text)
+    
+            neg += vs['neg']
+            neu += vs['neu']
+            pos += vs['pos']
+            compound += vs['compound']
+            
+    
+        # Compute the average score for each element 
+        neg = neg / len(comments)
+        neu = neu / len(comments)
+        pos = pos / len(comments)
+        compound = compound / len(comments)
+        
+        uClient1.close()
+        
+    except:
+            
+        uClient1.close()
+        neg = np.nan
+        neu = np.nan
+        pos = np.nan
+        compound = np.nan
+        
+    # Append data to the main dataframe     
+    row = pd.DataFrame([comps[page], stacks, followers, votes, companies, devs, integrations, neg, neu, pos, compound]).transpose()
+    data = data._append(row)
+        
+    uClient.close()
+    del page_html, page_soup
+    
+
+        
+# Rename columns 
+cols = { 0 : "Company", 1 :"N_Stacks", 2:"N_Followers", 3 :"N_Votes", 4: "N_Companies", 5:"N_Developers", 6: "N_Integrations",7: "Negative", 8 :"Neutral", 9: "Positive", 10: "Compound"}
+data = data.rename(columns = cols)
+
+############### Develop an algorithm to rank the companies ####################
+
+
+
+cols = list(data.columns)
+
+# Set data types 
+for i in cols:
+    if i != "Company":
+        data[i] = data[i].astype(float)
+
+
+# Calculate zscore for each variable to normalize the individual columns 
+for i in cols:
+    if i != "Company":
+        data['Z_' + i] = (data[i] - data[i].mean()) / data[i].std()
+        data['Z_'+ i] = data['Z_'+ i].fillna(0)
+        
+
+### Create an ensemble score by using a weighted combination of the individuals features grouped by Social Score, Business adoption and Sentiment analysis
+
+# Create 3 aggregated scores based on themes - Social (Stack.io website), Business and tech industry wide adoption, Sentiment analysis (uses only the compound score) 
+'''
+    Sentiment Analysis score readings   
+    positive sentiment: compound score >= 0.05
+    neutral sentiment: (compound score > -0.05) and (compound score < 0.05)
+    negative sentiment: compound score <= -0.05
+'''
+data['SOCIAL_SCORE'] = data['Z_N_Stacks']*0.4 + data['Z_N_Followers']*0.4 + data['Z_N_Votes']*0.2
+data['BUSINESS_ADOPTION'] = (data['Z_N_Companies'] + data['Z_N_Developers'] + data['Z_N_Integrations']) / 3
+data['SENTIMENT_SCORE'] =  data['Z_Compound']
+
+# Create a final aggregated score which ranks the companies  
+data['INVESTMENT_SCORE'] = data['SOCIAL_SCORE']*0.05 + data['BUSINESS_ADOPTION']*0.6 + data['SENTIMENT_SCORE']*0.35
+data = data.sort_values(by = ['INVESTMENT_SCORE'], ascending=False)
+
+
+data.to_csv('Stacks_data.csv', index=False )     
+
+print('JOB DONE')
